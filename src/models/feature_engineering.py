@@ -40,44 +40,46 @@ class FeatureEngineering:
         
         # En lugar de eliminar filas con NaN, rellenarlos de manera apropiada
         
-        # 1. Para indicadores de tendencia (EMAs, SMAs, MACD, etc.), usar forward fill y luego backward fill
-        trend_indicators = [col for col in df.columns if any(ind in col.lower() for ind in 
-                                                        ['ema', 'sma', 'macd', 'bb_', 'adx', 'obv', 'market_phase'])]
-        for col in trend_indicators:
-            if col in df.columns:
-                # Forward fill primero, luego backward fill para los NaN restantes
-                df[col] = df[col].ffill().bfill()
+        # # 1. Para indicadores de tendencia (EMAs, SMAs, MACD, etc.), usar forward fill y luego backward fill
+        # trend_indicators = [col for col in df.columns if any(ind in col.lower() for ind in 
+        #                                                 ['ema', 'sma', 'macd', 'bb_', 'adx', 'obv', 'market_phase'])]
+        # for col in trend_indicators:
+        #     if col in df.columns:
+        #         # Forward fill primero, luego backward fill para los NaN restantes
+        #         df[col] = df[col].ffill().bfill()
         
-        # 2. Para osciladores (RSI, Estocástico, etc.), rellenar con valores neutrales
-        oscillator_indicators = [col for col in df.columns if any(ind in col.lower() for ind in 
-                                                                ['rsi', 'stoch', 'momentum', 'divergence'])]
-        for col in oscillator_indicators:
-            if col in df.columns:
-                # Para RSI y Estocástico, 50 es un valor neutral
-                if 'rsi' in col.lower():
-                    df[col] = df[col].fillna(50.0)
-                # Para otros osciladores, usar 0 como valor neutral
-                else:
-                    df[col] = df[col].fillna(0.0)
+        # # 2. Para osciladores (RSI, Estocástico, etc.), rellenar con valores neutrales
+        # oscillator_indicators = [col for col in df.columns if any(ind in col.lower() for ind in 
+        #                                                         ['rsi', 'stoch', 'momentum', 'divergence'])]
+        # for col in oscillator_indicators:
+        #     if col in df.columns:
+        #         # Para RSI y Estocástico, 50 es un valor neutral
+        #         if 'rsi' in col.lower():
+        #             df[col] = df[col].fillna(50.0)
+        #         # Para otros osciladores, usar 0 como valor neutral
+        #         else:
+        #             df[col] = df[col].fillna(0.0)
         
-        # 3. Para indicadores de volatilidad (ATR, etc.), usar el valor medio
-        volatility_indicators = [col for col in df.columns if any(ind in col.lower() for ind in 
-                                                            ['atr', 'volatility', 'squeeze'])]
-        for col in volatility_indicators:
-            if col in df.columns:
-                # Usar la media del indicador si hay suficientes valores no-NaN
-                if df[col].count() > 5:
-                    mean_val = df[col].mean()
-                    df[col] = df[col].fillna(mean_val)
-                # Si no hay suficientes valores, usar 0
-                else:
-                    df[col] = df[col].fillna(0.0)
+        # # 3. Para indicadores de volatilidad (ATR, etc.), usar el valor medio
+        # volatility_indicators = [col for col in df.columns if any(ind in col.lower() for ind in 
+        #                                                     ['atr', 'volatility', 'squeeze'])]
+        # for col in volatility_indicators:
+        #     if col in df.columns:
+        #         # Usar la media del indicador si hay suficientes valores no-NaN
+        #         if df[col].count() > 5:
+        #             mean_val = df[col].mean()
+        #             df[col] = df[col].fillna(mean_val)
+        #         # Si no hay suficientes valores, usar 0
+        #         else:
+        #             df[col] = df[col].fillna(0.0)
         
-        # 4. Para cualquier columna restante con NaN, usar 0
-        remaining_nan_cols = df.columns[df.isna().any()].tolist()
-        for col in remaining_nan_cols:
-            df[col] = df[col].fillna(0.0)
+        # # 4. Para cualquier columna restante con NaN, usar 0
+        # remaining_nan_cols = df.columns[df.isna().any()].tolist()
+        # for col in remaining_nan_cols:
+        #     df[col] = df[col].fillna(0.0)
         
+        df = df.dropna()
+
         # Verificar si aún hay NaN después del procesamiento
         if df.isna().any().any():
             nan_cols = df.columns[df.isna().any()].tolist()

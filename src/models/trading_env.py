@@ -7,14 +7,14 @@ import matplotlib.pyplot as plt
 
 class TradingEnv(gym.Env):
     """
-    Entorno de trading para RL con soporte para múltiples timeframes y activos
+    Entorno de trading para RL usando solo el timeframe de 1H
     """
     
     def __init__(
         self,
-        data_1d: Dict[str, pd.DataFrame],  # Datos diarios por activo
-        data_1h: Dict[str, pd.DataFrame],  # Datos horarios por activo
-        data_15m: Dict[str, pd.DataFrame], # Datos de 15 minutos por activo
+        data_1d: Dict[str, pd.DataFrame],  # Datos diarios por activo (los mantenemos pero no los usamos)
+        data_1h: Dict[str, pd.DataFrame],  # Datos horarios por activo (los usamos)
+        data_15m: Dict[str, pd.DataFrame], # Datos de 15 minutos por activo (los mantenemos pero no los usamos)
         features: List[str],               # Lista de características (indicadores)
         window_size: int = 30,             # Tamaño de ventana para el estado
         commission: float = 0.001,         # Comisión por operación (0.1%)
@@ -24,9 +24,9 @@ class TradingEnv(gym.Env):
     ):
         super(TradingEnv, self).__init__()
         
-        self.data_1d = data_1d
-        self.data_1h = data_1h
-        self.data_15m = data_15m
+        self.data_1d = data_1d  # Mantener para futuro uso
+        self.data_1h = data_1h  # Usamos solo esto por ahora
+        self.data_15m = data_15m  # Mantener para futuro uso
         self.assets = list(data_1h.keys())
         self.features = features
         self.window_size = window_size
@@ -39,9 +39,9 @@ class TradingEnv(gym.Env):
         # Acciones: 0=mantener, 1=comprar, 2=vender
         self.action_space = spaces.Discrete(3)
         
-        # Observación: [características * window_size] + [posición actual, balance]
-        # + [identificador de activo (one-hot)]
-        n_features = len(features)  # Características de los 3 timeframes pero seleccionadas correctamente
+        # Filtrar para usar solo features de 1H (excluir los que comienzan con 1d_, 15m_, cross_tf_)
+        self.hourly_features = [f for f in features if not (f.startswith('1d_') or f.startswith('15m_') or f.startswith('cross_tf_'))]
+        n_features = len(self.hourly_features)
         n_assets = len(self.assets)
         
         self.observation_space = spaces.Dict({
@@ -74,111 +74,47 @@ class TradingEnv(gym.Env):
         self.hot_zones = None
     
     def _align_timeframes(self, asset):
-        """Alinea los datos de diferentes timeframes, tomando solo las características correctas de cada uno"""
+        """Alinea los datos, usando solo el timeframe 1H"""
         # Obtener datos base
-        data_1h = self.data_1h[asset].copy()
-        data_1d = self.data_1d[asset].copy()
-        data_15m = self.data_15m[asset].copy()
+        hourly_data = self.data_1h[asset].copy()
         
-        # Verificar que los índices son DatetimeIndex
-        if not isinstance(data_1h.index, pd.DatetimeIndex):
-            data_1h.index = pd.to_datetime(data_1h.index, utc=True)
-        if not isinstance(data_1d.index, pd.DatetimeIndex):
-            data_1d.index = pd.to_datetime(data_1d.index, utc=True)
-        if not isinstance(data_15m.index, pd.DatetimeIndex):
-            data_15m.index = pd.to_datetime(data_15m.index, utc=True)
+        # Verificar que el índice es DatetimeIndex
+        if not isinstance(hourly_data.index, pd.DatetimeIndex):
+            hourly_data.index = pd.to_datetime(hourly_data.index, utc=True)
         
-        # Reindexar para tener todos los timeframes en cada punto horario
-        data_1h_idx = data_1h.index
+        # Normalizar el precio de cierre para features (manteniendo original para cálculos)
+        if 'Close' in hourly_data.columns:
+            first_close = hourly_data['Close'].iloc[0]
+            if first_close != 0:  # Evitar división por cero
+                hourly_data['Close_norm'] = hourly_data['Close'] / first_close
+            else:
+                hourly_data['Close_norm'] = hourly_data['Close']
         
-        # CORRECCIÓN: Solo usar OHLC del timeframe de 1 hora
-        # Preparar datos horarios (incluidos OHLC)
-        hourly_data = data_1h.copy()
-        
-        # Lista de indicadores diarios específicos
-        daily_indicators = [
-            'SMA20_slope', 'Market_Phase', 'Distance_52W_High', 'Distance_52W_Low', 
-            'ADX_normalized'
-        ]
-        
-        # Lista de indicadores de 15 minutos específicos
-        min15_indicators = [
-            'Momentum', 'RSI_divergence', 'Volume_acceleration', 'BB_squeeze'
-        ]
-        
-        # Forwardfillear los indicadores diarios a cada hora
-        daily_on_hourly = pd.DataFrame(index=data_1h_idx)
-        
-        # Iterar por las columnas del dataframe diario
-        for col in data_1d.columns:
-            # Solo incluir indicadores específicos del timeframe diario
-            if any(indicator in col for indicator in daily_indicators):
-                col_name = f'1d_{col}'
-                daily_on_hourly[col_name] = np.nan
-                
-                # Para cada fecha en el índice diario
-                for date in data_1d.index:
-                    # CORRECCIÓN: Verificar que estamos usando objetos datetime
-                    date_only = date.date() if hasattr(date, 'date') else pd.Timestamp(date).date()
-                    
-                    # Crear mascara para todos los índices horarios que corresponden a esta fecha
-                    mask = pd.Series(False, index=data_1h.index)
-                    for i, idx in enumerate(data_1h.index):
-                        idx_date = idx.date() if hasattr(idx, 'date') else pd.Timestamp(idx).date()
-                        if idx_date == date_only:
-                            mask.iloc[i] = True
-                            
-                    # Asignar el valor del indicador diario a todas las horas de ese día
-                    if mask.any():
-                        daily_on_hourly.loc[mask, col_name] = data_1d.loc[date, col]
-        
-        # Rellenar valores NaN con forward fill
-        daily_on_hourly = daily_on_hourly.ffill()
-        
-        # Agregar los indicadores de 15 minutos (último valor de cada hora)
-        min15_on_hourly = pd.DataFrame(index=data_1h_idx)
-        
-        for col in data_15m.columns:
-            # Solo incluir indicadores específicos del timeframe de 15 minutos
-            if any(indicator in col for indicator in min15_indicators):
-                col_name = f'15m_{col}'
-                min15_on_hourly[col_name] = np.nan
-                
-                # Para cada hora en el índice horario
-                for hour in data_1h_idx:
-                    # Convertir a timestamp si es necesario
-                    hour_ts = pd.Timestamp(hour)
-                    
-                    # Tomar los datos de 15m hasta la hora actual
-                    mask = data_15m.index <= hour_ts
-                    if mask.any():
-                        last_15m_data = data_15m[mask].iloc[-1]
-                        min15_on_hourly.loc[hour_ts, col_name] = last_15m_data[col]
-        
-        # Rellenar valores NaN
-        min15_on_hourly = min15_on_hourly.ffill()
-        
-        # Obtener características cross-timeframe si están presentes
-        cross_tf_cols = [col for col in data_1h.columns if 'cross_tf_' in col]
-        cross_tf_data = hourly_data[cross_tf_cols].copy() if cross_tf_cols else pd.DataFrame(index=data_1h_idx)
-        
-        # Unir todos los datos
-        aligned_data = pd.concat([hourly_data, daily_on_hourly, min15_on_hourly, cross_tf_data], axis=1)
+        # También normalizar otros precios OHLC si existen
+        for col in ['Open', 'High', 'Low']:
+            if col in hourly_data.columns:
+                first_value = hourly_data[col].iloc[0]
+                if first_value != 0:  # Evitar división por cero
+                    hourly_data[f'{col}_norm'] = hourly_data[col] / first_value
+                else:
+                    hourly_data[f'{col}_norm'] = hourly_data[col]
         
         # Manejar valores NaN
         # Para indicadores de tendencia, usar forward fill y luego backward fill
-        trend_cols = [col for col in aligned_data.columns if any(ind in col.lower() for ind in 
-                                                        ['ema', 'sma', 'macd', 'market_phase'])]
+        trend_cols = [col for col in hourly_data.columns if any(ind in col.lower() for ind in 
+                                                    ['ema', 'sma', 'macd', 'bb_', 'adx', 'obv', 'market_phase'])]
         for col in trend_cols:
-            aligned_data[col] = aligned_data[col].ffill().bfill()
-            
-        # Para otros indicadores, usar 0 como valor neutral
-        aligned_data = aligned_data.fillna(0)
+            if col in hourly_data.columns:
+                hourly_data[col] = hourly_data[col].ffill().bfill()
         
-        return aligned_data
+        # Para otros indicadores, usar 0 como valor neutral
+        hourly_data = hourly_data.fillna(0)
+        
+        return hourly_data
 
     def _calculate_hot_zones(self, asset):
         """Calcula zonas óptimas de compra/venta basadas en cambios significativos"""
+        # Usar el precio de cierre original, no el normalizado
         data = self.data_1h[asset]['Close'].copy()
         hot_zones = pd.DataFrame(index=data.index)
         
@@ -197,7 +133,7 @@ class TradingEnv(gym.Env):
             min_idx = window.idxmin()
             max_idx = window.idxmax()
             
-            price_change = (max_price - min_price) / min_price
+            price_change = (max_price - min_price) / min_price if min_price > 0 else 0
             
             # Si el cambio es significativo (≥5%)
             if price_change >= self.min_price_change:
@@ -213,10 +149,8 @@ class TradingEnv(gym.Env):
                         current_idx = data.index[j]
                         
                         if distance == 0:
-                            # CORRECCIÓN: Usar .loc para evitar chained assignment
                             hot_zones.loc[current_idx, 'buy_zone'] = 1.0
                         else:
-                            # CORRECCIÓN: Usar .loc para evitar chained assignment
                             current_value = hot_zones.loc[current_idx, 'buy_zone']
                             hot_zones.loc[current_idx, 'buy_zone'] = max(
                                 current_value,
@@ -234,10 +168,8 @@ class TradingEnv(gym.Env):
                         current_idx = data.index[j]
                         
                         if distance == 0:
-                            # CORRECCIÓN: Usar .loc para evitar chained assignment
                             hot_zones.loc[current_idx, 'sell_zone'] = 1.0
                         else:
-                            # CORRECCIÓN: Usar .loc para evitar chained assignment
                             current_value = hot_zones.loc[current_idx, 'sell_zone']
                             hot_zones.loc[current_idx, 'sell_zone'] = max(
                                 current_value,
@@ -245,7 +177,6 @@ class TradingEnv(gym.Env):
                             )
         
         return hot_zones
-
     
     def reset(self, seed=None, options=None):
         """Reinicia el entorno y selecciona un activo aleatorio"""
@@ -276,8 +207,24 @@ class TradingEnv(gym.Env):
     
     def _get_observation(self):
         """Devuelve la observación actual del entorno"""
-        # Obtener datos de mercado
-        market_data = self.data_aligned.iloc[self.current_step - self.window_size:self.current_step].values
+        # Obtener datos de mercado (usando valores normalizados para los precios)
+        market_data = self.data_aligned.iloc[self.current_step - self.window_size:self.current_step]
+        
+        # Crear lista de columnas a usar, reemplazando columnas de precio por sus versiones normalizadas
+        use_columns = []
+        for col in self.hourly_features:
+            if col in ['Open', 'High', 'Low', 'Close']:
+                normalized_col = f'{col}_norm'
+                if normalized_col in market_data.columns:
+                    use_columns.append(normalized_col)
+                else:
+                    use_columns.append(col)  # Fallback si no existe versión normalizada
+            else:
+                use_columns.append(col)
+                
+        # Seleccionar solo las columnas relevantes
+        market_features = [col for col in use_columns if col in market_data.columns]
+        market_data = market_data[market_features].values
         
         # Preparar one-hot encoding para el activo actual
         asset_id = np.zeros(len(self.assets))
@@ -455,57 +402,3 @@ class TradingEnv(gym.Env):
         
         plt.tight_layout()
         plt.show()
-
-# Ejemplo de uso:
-# if __name__ == "__main__":
-#     # Datos de ejemplo (en la práctica, usar datos reales de IBKR)
-#     import yfinance as yf
-    
-#     # Descargar datos
-#     data_1d = {}
-#     data_1h = {}
-#     data_15m = {}
-    
-#     symbols = ['AAPL', 'MSFT', 'GOOGL']
-#     for symbol in symbols:
-#         data_1d[symbol] = yf.download(symbol, period='1y', interval='1d')
-#         data_1h[symbol] = yf.download(symbol, period='60d', interval='1h')
-#         data_15m[symbol] = yf.download(symbol, period='30d', interval='15m')
-    
-#     # Crear entorno
-#     env = TradingEnv(
-#         data_1d=data_1d,
-#         data_1h=data_1h,
-#         data_15m=data_15m,
-#         features=['Open', 'High', 'Low', 'Close', 'Volume', 'RSI', 'MACD', 'MACD_signal',
-#                  'MACD_histogram', 'EMA8', 'EMA21', 'EMA50', 'BB_middle', 'BB_upper',
-#                  'BB_lower', 'BB_width', 'ATR', 'Stoch_K', 'Stoch_D', 'OBV', 'ADX',
-#                  '1d_SMA20_slope', '1d_Market_Phase', '1d_Distance_52W_High', '1d_Distance_52W_Low',
-#                  '1d_ADX_normalized', '15m_Momentum', '15m_RSI_divergence',
-#                  '15m_Volume_acceleration', '15m_BB_squeeze', 'cross_tf_trend_alignment',
-#                  'cross_tf_multi_tf_momentum', 'cross_tf_inflection_point',
-#                  'cross_tf_multi_tf_strength', 'cross_tf_trend_change_index',
-#                  'cross_tf_volatility_ratio'],
-#         window_size=30,
-#         commission=0.001,
-#         initial_balance=10000,
-#         reward_window=20,
-#         min_price_change=0.05
-#     )
-    
-#     # Resetear entorno
-#     obs, info = env.reset()
-#     print(f"Entorno iniciado con activo: {info['current_asset']}")
-    
-#     # Ejecutar algunas acciones aleatorias
-#     for i in range(100):
-#         action = np.random.randint(0, 3)
-#         obs, reward, done, truncated, info = env.step(action)
-#         print(f"Paso {i}, Acción: {action}, Recompensa: {reward:.4f}, Balance: {info['balance']:.2f}")
-        
-#         if done:
-#             print("Episodio terminado")
-#             break
-    
-#     # Renderizar resultados
-#     env.render()

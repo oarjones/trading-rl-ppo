@@ -70,6 +70,11 @@ class PPOMemory:
         
         return states, actions, old_probs, vals, rewards, dones, batches, asset_ids, account_states
 
+import torch
+import torch.nn as nn
+from torch.distributions import Categorical
+from typing import Tuple, List
+
 class ActorNetwork(nn.Module):
     """Red neuronal para el actor (política) del PPO"""
     
@@ -87,7 +92,7 @@ class ActorNetwork(nn.Module):
         self.n_features = input_dims[1]
         self.n_assets = n_assets
         
-        # CORRECCIÓN: Guardar número de características para verificación
+        # Guardar número de características para verificación
         self._expected_features = self.n_features
         
         # Capas convolucionales para procesar secuencias temporales
@@ -145,17 +150,15 @@ class ActorNetwork(nn.Module):
         Returns:
             Tensor de forma (batch_size, n_actions) con las probabilidades de cada acción
         """
-        # CORRECCIÓN: Verificar y adaptar dimensiones si son diferentes
-        current_features = market_data.shape[2]
-        if current_features != self._expected_features:
-            print(f"ADVERTENCIA: Número de características diferente. Esperado: {self._expected_features}, Actual: {current_features}")
+        # Verificar y adaptar dimensiones si son diferentes
+        if market_data.shape[2] != self._expected_features:
+            print(f"ADVERTENCIA: Número de características diferente en Actor. Esperado: {self._expected_features}, Actual: {market_data.shape[2]}")
             
-            # Dos opciones: o reconstruir las capas convolucionales o adaptar el tensor de entrada
-            # Opción 1: Adaptar el tensor (más rápido)
-            if current_features < self._expected_features:
+            # Adaptar el tensor de entrada
+            if market_data.shape[2] < self._expected_features:
                 # Rellenar con ceros hasta el número esperado de características
                 padding = torch.zeros(market_data.shape[0], market_data.shape[1], 
-                                     self._expected_features - current_features, 
+                                     self._expected_features - market_data.shape[2], 
                                      device=market_data.device)
                 market_data = torch.cat([market_data, padding], dim=2)
             else:
@@ -198,7 +201,7 @@ class CriticNetwork(nn.Module):
         self.n_features = input_dims[1]
         self.n_assets = n_assets
         
-        # CORRECCIÓN: Guardar número de características para verificación
+        # Guardar número de características para verificación
         self._expected_features = self.n_features
         
         # Capas convolucionales para procesar secuencias temporales
@@ -255,16 +258,15 @@ class CriticNetwork(nn.Module):
         Returns:
             Tensor de forma (batch_size, 1) con el valor estimado
         """
-        # CORRECCIÓN: Verificar y adaptar dimensiones si son diferentes
-        current_features = market_data.shape[2]
-        if current_features != self._expected_features:
-            print(f"ADVERTENCIA: Número de características diferente. Esperado: {self._expected_features}, Actual: {current_features}")
+        # Verificar y adaptar dimensiones si son diferentes
+        if market_data.shape[2] != self._expected_features:
+            print(f"ADVERTENCIA: Número de características diferente en Critic. Esperado: {self._expected_features}, Actual: {market_data.shape[2]}")
             
             # Adaptar el tensor de entrada
-            if current_features < self._expected_features:
+            if market_data.shape[2] < self._expected_features:
                 # Rellenar con ceros hasta el número esperado de características
                 padding = torch.zeros(market_data.shape[0], market_data.shape[1], 
-                                     self._expected_features - current_features, 
+                                     self._expected_features - market_data.shape[2], 
                                      device=market_data.device)
                 market_data = torch.cat([market_data, padding], dim=2)
             else:
@@ -290,7 +292,6 @@ class CriticNetwork(nn.Module):
         value = self.fc_layers(x)
         
         return value
-
 
 class PPOAgent:
     """Agente PPO para trading"""

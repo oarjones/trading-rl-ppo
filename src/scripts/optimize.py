@@ -139,7 +139,7 @@ def load_data(config: Dict[str, Any]) -> Dict[str, Dict[str, pd.DataFrame]]:
     
     return aligned_data
 
-def process_features(data: Dict[str, Dict[str, pd.DataFrame]], config: Dict[str, Any]) -> tuple:
+def process_features_multiple_timeframe(data: Dict[str, Dict[str, pd.DataFrame]], config: Dict[str, Any]) -> tuple:
     """
     Procesa los datos y calcula características técnicas
     
@@ -210,6 +210,55 @@ def process_features(data: Dict[str, Dict[str, pd.DataFrame]], config: Dict[str,
             all_features = hourly_features + daily_features + min15_features + cross_tf_features
             
     return processed_data, all_features
+
+def process_features(data: Dict[str, Dict[str, pd.DataFrame]], config: Dict[str, Any]) -> tuple:
+    """
+    Procesa los datos y calcula características técnicas
+    
+    Args:
+        data: Datos en formato {símbolo: {timeframe: DataFrame}}
+        config: Configuración del sistema
+        
+    Returns:
+        Tupla de (datos procesados, lista de características)
+    """
+    logger.info("Procesando características técnicas...")
+    
+    # Inicializar ingeniería de características
+    feature_engineering = FeatureEngineering()
+    
+    processed_data = {}
+    all_features = []
+    
+    for symbol, timeframes_data in data.items():
+        logger.info(f"Procesando características para {symbol}")
+        processed_data[symbol] = {}
+        
+        # Procesar solo el timeframe 1H
+        features_1h = feature_engineering.calculate_indicators(
+            timeframes_data["1H"], "1h"
+        )
+        
+        # Mantener datos de 1D y 15M sin procesar para futuro uso
+        processed_data[symbol]["1D"] = timeframes_data["1D"].copy()
+        processed_data[symbol]["1H"] = features_1h
+        processed_data[symbol]["15M"] = timeframes_data["15M"].copy()
+        
+        # Recopilar todas las características solo de 1H
+        if not all_features:
+            all_features = list(features_1h.columns)
+            
+            # Añadir las versiones normalizadas de OHLC para usar como features
+            price_cols = ['Open', 'High', 'Low', 'Close']
+            for col in price_cols:
+                if col in all_features:
+                    # Añadir versión normalizada si no existe ya
+                    norm_col = f'{col}_norm'
+                    if norm_col not in all_features:
+                        all_features.append(norm_col)
+            
+    return processed_data, all_features
+
 
 def prepare_data_for_optimization(processed_data: Dict[str, Dict[str, pd.DataFrame]]) -> tuple:
     """
