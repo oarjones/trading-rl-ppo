@@ -1,0 +1,55 @@
+{
+    "data_dir": "data",
+    "models_dir": "models",
+    "results_dir": "results",
+    "symbols": ["SPY", "AAPL", "MSFT", "GOOGL", "AMZN"],
+    "ibkr": {
+        "host": "127.0.0.1",
+        "port": 7497,
+        "client_id": 0,
+        "duration": "1 Y",
+        "use_rth": true,
+        "use_cached_data": true
+    },
+    "environment": {
+        "timeframes": ["1D", "1H", "15M"],
+        "window_size": 30,
+        "commission": 0.001,
+        "initial_balance": 10000,
+        "reward_window": 20,
+        "min_price_change": 0.05
+    },
+    "features": {
+        "include_standard_indicators": true,
+        "include_cross_timeframe": true
+    },
+    "training": {
+        "learning_rate": 3e-4,
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+        "policy_clip": 0.2,
+        "batch_size": 64,
+        "n_epochs": 10,
+        "entropy_coef": 0.01,
+        "value_coef": 0.5,
+        "actor_hidden_dims": [512, 256, 128],
+        "critic_hidden_dims": [512, 256, 128],
+        "n_episodes": 100,
+        "max_steps_per_episode": 1000,
+        "save_freq": 10,
+        "eval_episodes": 20,
+        "render_evaluation": true
+    },
+    "optimization": {
+        "study_name": "ppo_trading_optimization",
+        "n_trials": 100,
+        "n_startup_trials": 10,
+        "n_evaluations": 3,
+        "n_episodes_per_eval": 20,
+        "max_episode_steps": 10000,
+        "final_training_episodes": 200
+    },
+    "quantconnect": {
+        "lean_dir": "~/Lean"
+    }
+}
