@@ -137,9 +137,9 @@ env.bak/
 venv.bak/
 
 #models & data & results
-models/
+/models/
+/data/
 results/
-data/
 
 # Spyder project settings
 .spyderproject
